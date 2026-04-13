@@ -1,18 +1,14 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { AuthModule } from './auth/auth.module';
-import { RedisModule } from './redis/redis.module';
 import { ConfigModule } from '@nestjs/config';
-import { DsqlModule } from './database/dsql.module';
+import { AuroraDsqlModule } from './database/aurora-dsql.module';
 import { UsersModule } from './users/users.module';
+import { AuthModule } from './auth/auth.module';
 @Module({
-  imports: [ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-    }),
-    AuthModule, RedisModule, DsqlModule, UsersModule],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    AuroraDsqlModule,
+    UsersModule,
+    AuthModule,
+  ],
 })
 export class AppModule {}
