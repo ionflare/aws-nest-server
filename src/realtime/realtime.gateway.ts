@@ -115,6 +115,16 @@ export class RealtimeGateway
         },
       ),
     );
+
+    this.listenerCleanupFns.push(
+     this.roomEventsService.onRoomStarted(({ roomId, matchId }) => {
+      this.broadcastToChannel(
+        this.buildRoomChannel(roomId),
+         'room_started',
+        { roomId, matchId },
+       );
+      }),
+    );
   }
 
   afterInit(server: WsWebSocketServer) {
