@@ -40,7 +40,7 @@ interface AuthenticatedSocket extends WebSocket {
 }
 
 @WebSocketGateway({
-  path: '/ws',
+  path: '/api/ws',
 })
 export class RealtimeGateway
   implements
