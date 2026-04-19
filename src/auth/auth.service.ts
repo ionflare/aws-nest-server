@@ -10,7 +10,6 @@ import { PasswordService } from '../common/security/password.service';
 import { AuroraDsqlService } from '../database/aurora-dsql.service';
 import { AuthRepository, AppUserRow } from './auth.repository';
 import { LoginDto } from './dto/login.dto';
-import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @Injectable()
 export class AuthService {
@@ -71,29 +70,28 @@ export class AuthService {
       this.parseExpiresInToMs(refreshExpiresInRaw) / 1000,
     );
 
-    const payload = {
+    const accessPayload = {
       sub: user.user_id,
       username: user.username,
       email: user.email,
       displayName: user.display_name,
     };
 
+    const refreshPayload = {
+      sub: user.user_id,
+      type: 'refresh',
+    };
+
     const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(payload, {
+      this.jwtService.signAsync(accessPayload, {
         secret: accessSecret,
         expiresIn: accessExpiresIn,
       }),
-      this.jwtService.signAsync(
-        {
-          sub: user.user_id,
-          type: 'refresh',
-        },
-        {
-          secret: refreshSecret,
-          expiresIn: refreshExpiresIn,
-          jwtid: randomUUID(),
-        },
-      ),
+      this.jwtService.signAsync(refreshPayload, {
+        secret: refreshSecret,
+        expiresIn: refreshExpiresIn,
+        jwtid: randomUUID(),
+      }),
     ]);
 
     return {
@@ -168,7 +166,7 @@ export class AuthService {
     }
   }
 
-  async refresh(dto: RefreshTokenDto) {
+  async refresh(refreshToken: string) {
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET');
 
     if (!refreshSecret) {
@@ -178,7 +176,7 @@ export class AuthService {
     let payload: { sub: string; type: string };
 
     try {
-      payload = await this.jwtService.verifyAsync(dto.refreshToken, {
+      payload = await this.jwtService.verifyAsync(refreshToken, {
         secret: refreshSecret,
       });
     } catch {
@@ -189,7 +187,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    const refreshTokenHash = this.hashRefreshToken(dto.refreshToken);
+    const refreshTokenHash = this.hashRefreshToken(refreshToken);
     const session =
       await this.authRepository.findActiveSessionByRefreshTokenHash(
         refreshTokenHash,
@@ -205,11 +203,13 @@ export class AuthService {
       throw new UnauthorizedException('User not available');
     }
 
-    const { accessToken, refreshToken, refreshExpiresInSeconds } =
+    const { accessToken, refreshToken: newRefreshToken, refreshExpiresInSeconds } =
       await this.buildTokens(user);
 
-    const newRefreshHash = this.hashRefreshToken(refreshToken);
-    const newExpiresAt = new Date(Date.now() + refreshExpiresInSeconds * 1000);
+    const newRefreshHash = this.hashRefreshToken(newRefreshToken);
+    const newExpiresAt = new Date(
+      Date.now() + refreshExpiresInSeconds * 1000,
+    );
 
     const client: PoolClient = await this.db.getPool().connect();
 
@@ -230,7 +230,13 @@ export class AuthService {
       return {
         message: 'Token refreshed',
         accessToken,
-        refreshToken,
+        refreshToken: newRefreshToken,
+        user: {
+          userId: user.user_id,
+          username: user.username,
+          email: user.email,
+          displayName: user.display_name,
+        },
       };
     } catch (error) {
       try {
