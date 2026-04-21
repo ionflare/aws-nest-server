@@ -51,6 +51,10 @@ export class RoomEventsService {
     Listener<{ roomId: string; targetUserId: string; byUserId: string }>
   >();
 
+  private readonly roomStartedListeners = new Set<
+    Listener<{ roomId: string; matchId: string }>
+  >();
+
   onRoomSnapshot(listener: Listener<{ room: RoomSnapshotView }>) {
     this.roomSnapshotListeners.add(listener);
     return () => this.roomSnapshotListeners.delete(listener);
@@ -76,6 +80,11 @@ export class RoomEventsService {
   ) {
     this.roomMemberKickedListeners.add(listener);
     return () => this.roomMemberKickedListeners.delete(listener);
+  }
+
+  onRoomStarted(listener: Listener<{ roomId: string; matchId: string }>) {
+    this.roomStartedListeners.add(listener);
+    return () => this.roomStartedListeners.delete(listener);
   }
 
   emitRoomSnapshot(room: RoomSnapshotView) {
@@ -105,6 +114,12 @@ export class RoomEventsService {
   emitRoomMemberKicked(roomId: string, targetUserId: string, byUserId: string) {
     for (const listener of this.roomMemberKickedListeners) {
       listener({ roomId, targetUserId, byUserId });
+    }
+  }
+
+  emitRoomStarted(roomId: string, matchId: string) {
+    for (const listener of this.roomStartedListeners) {
+      listener({ roomId, matchId });
     }
   }
 }

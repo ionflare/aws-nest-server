@@ -23,6 +23,8 @@ import { ChatService } from '../chat/chat.service';
 import { SendChatMessageDto } from '../chat/dto/send-chat-message.dto';
 import { RoomEventsService } from '../rooms/room-events.service';
 import { RoomsService } from '../rooms/rooms.service';
+import { MatchesService } from '../matches/matches.service';
+import { PlayMoveDto } from '../matches/dto/play-move.dto';
 
 type JwtUserPayload = {
   sub: string;
@@ -65,6 +67,7 @@ export class RealtimeGateway
     private readonly chatService: ChatService,
     private readonly roomsService: RoomsService,
     private readonly roomEventsService: RoomEventsService,
+    private readonly matchesService: MatchesService,
   ) {}
 
   onModuleInit() {
@@ -418,6 +421,88 @@ export class RealtimeGateway
         error instanceof Error ? error.message : 'Failed to send message';
       throw new WsException(message);
     }
+  }
+
+  @SubscribeMessage('match_subscribe')
+  async handleMatchSubscribe(
+  @ConnectedSocket() client: AuthenticatedSocket,
+  @MessageBody() data: { matchId?: string },
+  ) {
+  const userId = client.user?.sub;
+  if (!userId) {
+    throw new WsException('Unauthorized');
+  }
+
+  if (!data.matchId) {
+    throw new WsException('matchId is required');
+  }
+
+  const result = await this.matchesService.getMatch(data.matchId, userId);
+
+  const channel = this.buildMatchChannel(data.matchId);
+  this.addClientToChannel(client, channel);
+
+  return {
+    event: 'match_state_updated',
+    data: result.match,
+  };
+  }
+
+  @SubscribeMessage('match_unsubscribe')
+  handleMatchUnsubscribe(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { matchId?: string },
+  ) {
+  if (!data.matchId) {
+    throw new WsException('matchId is required');
+  }
+
+  const channel = this.buildMatchChannel(data.matchId);
+  const members = this.channelMembers.get(channel);
+
+  members?.delete(client);
+  client.subscriptions?.delete(channel);
+
+  if (members && members.size === 0) {
+    this.channelMembers.delete(channel);
+  }
+
+  return {
+    event: 'match_unsubscribed',
+    data: { matchId: data.matchId },
+  };
+ }
+
+  @SubscribeMessage('play_move')
+  async handlePlayMove(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: PlayMoveDto,
+  ) {
+  const userId = client.user?.sub;
+  if (!userId) {
+    throw new WsException('Unauthorized');
+  }
+
+  try {
+    const result = await this.matchesService.playMove(userId, data);
+
+    this.broadcastToChannel(
+      this.buildMatchChannel(data.matchId),
+      'match_state_updated',
+      result.match,
+    );
+
+    return {
+      event: 'move_played',
+      data: {
+        matchId: data.matchId,
+      },
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Failed to play move';
+    throw new WsException(message);
+  }
   }
 
   onModuleDestroy() {

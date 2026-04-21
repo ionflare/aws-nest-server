@@ -28,6 +28,11 @@ type AuthenticatedRequest = Request & {
 export class RoomsController {
   constructor(private readonly roomsService: RoomsService) {}
 
+  @Get('game-types')
+  async listGameTypes() {
+    return this.roomsService.listGameTypes();
+  }
+
   @Post('create')
   async createRoom(
     @Body() dto: CreateRoomDto,
@@ -67,5 +72,21 @@ export class RoomsController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.roomsService.getRoom(roomId, req.user.sub);
+  }
+  
+  @Post(':roomId/toggle-ready')
+  async toggleReady(
+  @Param('roomId') roomId: string,
+  @Req() req: AuthenticatedRequest,
+  ) {
+   return this.roomsService.toggleReady(roomId, req.user.sub);
+  }
+
+  @Post(':roomId/start-match')
+  async startMatch(
+  @Param('roomId') roomId: string,
+  @Req() req: AuthenticatedRequest,
+  ) {
+   return this.roomsService.startMatch(roomId, req.user.sub);
   }
 }

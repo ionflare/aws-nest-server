@@ -4,8 +4,9 @@ import { RoomsController } from './rooms.controller';
 import { RoomEventsService } from './room-events.service';
 import { RoomsRepository } from './rooms.repository';
 import { RoomsService } from './rooms.service';
-
+import { MatchesModule } from '../matches/matches.module';
 @Module({
+  imports: [MatchesModule],
   controllers: [RoomsController],
   providers: [
     RoomsService,
