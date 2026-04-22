@@ -5,8 +5,9 @@ import { RoomEventsService } from './room-events.service';
 import { RoomsRepository } from './rooms.repository';
 import { RoomsService } from './rooms.service';
 import { MatchesModule } from '../matches/matches.module';
+import { ParticipationModule } from '../participation/participation.module';
 @Module({
-  imports: [MatchesModule],
+  imports: [MatchesModule, ParticipationModule],
   controllers: [RoomsController],
   providers: [
     RoomsService,

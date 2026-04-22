@@ -4,8 +4,9 @@ import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
 import { GameEngineRegistry } from './engines/game-engine.registry';
 import { XoGameEngine } from './engines/xo.game-engine';
-
+import { ParticipationModule } from '../participation/participation.module';
 @Module({
+  imports: [ParticipationModule],
   controllers: [MatchesController],
   providers: [
     MatchesRepository,

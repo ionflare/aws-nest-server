@@ -15,14 +15,15 @@ import {
   MatchPlayerInternalRow,
   MatchesRepository,
 } from './matches.repository';
-
+import { ParticipationService } from '../participation/participation.service';
 @Injectable()
 export class MatchesService {
   constructor(
     private readonly db: AuroraDsqlService,
     private readonly matchesRepository: MatchesRepository,
     private readonly gameEngineRegistry: GameEngineRegistry,
-  ) {}
+    private readonly participationService: ParticipationService,
+  ) { }
 
   private toGamePlayers(players: MatchPlayerInternalRow[]): GamePlayer[] {
     return players.map((player) => ({
@@ -164,6 +165,13 @@ export class MatchesService {
         currentStateText: JSON.stringify(result.nextState),
         finished: result.finished,
       });
+
+      if (result.finished) {
+        await this.participationService.releaseMatchMembershipsForMatch(
+          client,
+          dto.matchId,
+        );
+      }
 
       await client.query('COMMIT');
     } catch (error) {

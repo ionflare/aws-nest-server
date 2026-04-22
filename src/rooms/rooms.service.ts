@@ -18,6 +18,7 @@ import {
 } from './room-events.service';
 import { RoomsRepository } from './rooms.repository';
 import { GameEngineRegistry } from '../matches/engines/game-engine.registry';
+import { ParticipationService } from '../participation/participation.service';
 @Injectable()
 export class RoomsService {
   constructor(
@@ -26,7 +27,8 @@ export class RoomsService {
     private readonly passwordService: PasswordService,
     private readonly roomEventsService: RoomEventsService,
     private readonly gameEngineRegistry: GameEngineRegistry,
-  ) {}
+    private readonly participationService: ParticipationService,
+  ) { }
 
   private generateRoomCode(length = 6): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -111,6 +113,8 @@ export class RoomsService {
   }
 
   async createRoom(userId: string, dto: CreateRoomDto) {
+    await this.participationService.assertCanEnterRoom(userId);
+
     const gameType = await this.roomsRepository.findGameTypeById(dto.gameTypeId);
 
     if (!gameType) {
@@ -159,6 +163,12 @@ export class RoomsService {
           isHost: true,
         });
 
+        await this.participationService.acquireRoomMembership(
+          client,
+          userId,
+          room.room_id,
+        );
+
         await client.query('COMMIT');
 
         const snapshot = await this.getRoomSnapshotInternal(room.room_id);
@@ -180,6 +190,14 @@ export class RoomsService {
         }
 
         if (error?.code === '23505') {
+          const constraint = String(error?.constraint ?? '');
+
+          if (constraint === 'uq_active_room_memberships_user') {
+            throw new ConflictException(
+              'User is already in another active room',
+            );
+          }
+
           continue;
         }
 
@@ -198,6 +216,8 @@ export class RoomsService {
     if (!room) {
       throw new NotFoundException('Room not found');
     }
+
+    await this.participationService.assertCanEnterRoom(userId, room.room_id);
 
     if (room.room_status !== 'waiting') {
       throw new ConflictException('Room is not open for joining');
@@ -256,6 +276,12 @@ export class RoomsService {
         isHost: false,
       });
 
+      await this.participationService.acquireRoomMembership(
+        client,
+        userId,
+        room.room_id,
+      );
+
       await client.query('COMMIT');
 
       const snapshot = await this.getRoomSnapshotInternal(room.room_id);
@@ -278,6 +304,14 @@ export class RoomsService {
       }
 
       if (error?.code === '23505') {
+        const constraint = String(error?.constraint ?? '');
+
+        if (constraint === 'uq_active_room_memberships_user') {
+          throw new ConflictException(
+            'User is already in another active room',
+          );
+        }
+
         throw new ConflictException('Join conflict detected. Please try again.');
       }
 
@@ -305,10 +339,12 @@ export class RoomsService {
       await client.query('BEGIN');
 
       await this.roomsRepository.deleteRoomPlayer(client, roomId, userId);
+      await this.participationService.releaseRoomMembershipForUser(client, userId);
 
       const remainingCount = await this.roomsRepository.getRoomMemberCount(roomId);
 
       if (remainingCount <= 0) {
+        await this.participationService.releaseRoomMembershipsForRoom(client, roomId);
         await this.roomsRepository.deleteRoom(client, roomId);
         await client.query('COMMIT');
 
@@ -326,6 +362,7 @@ export class RoomsService {
         const nextHost = await this.roomsRepository.findNextHostCandidate(roomId);
 
         if (!nextHost) {
+          await this.participationService.releaseRoomMembershipsForRoom(client, roomId);
           await this.roomsRepository.deleteRoom(client, roomId);
           await client.query('COMMIT');
 
@@ -413,6 +450,10 @@ export class RoomsService {
       await client.query('BEGIN');
 
       await this.roomsRepository.deleteRoomPlayer(client, roomId, dto.targetUserId);
+      await this.participationService.releaseRoomMembershipForUser(
+        client,
+        dto.targetUserId,
+      );
 
       await client.query('COMMIT');
 
@@ -474,174 +515,196 @@ export class RoomsService {
     };
   }
   async listGameTypes() {
-  const gameTypes = await this.roomsRepository.listGameTypes();
-
-  return {
-    gameTypes: gameTypes.map((gameType) => ({
-      gameTypeId: gameType.game_type_id,
-      gameCode: gameType.game_code,
-      gameName: gameType.game_name,
-      minPlayers: gameType.min_players,
-      maxPlayers: gameType.max_players,
-    })),
-  };
- }
-
- async toggleReady(roomId: string, userId: string) {
-  const room = await this.roomsRepository.findRoomById(roomId);
-
-  if (!room) {
-    throw new NotFoundException('Room not found');
-  }
-
-  if (room.room_status !== 'waiting') {
-    throw new ConflictException('Room is no longer waiting');
-  }
-
-  const member = await this.roomsRepository.findRoomPlayerByUserId(roomId, userId);
-  if (!member) {
-    throw new ForbiddenException('You are not a member of this room');
-  }
-
-  const client: PoolClient = await this.db.getPool().connect();
-
-  try {
-    await client.query('BEGIN');
-
-    await this.roomsRepository.updateRoomPlayerReady(
-      client,
-      roomId,
-      userId,
-      !member.is_ready,
-    );
-
-    await client.query('COMMIT');
-
-    const snapshot = await this.getRoomSnapshotInternal(roomId);
-    if (!snapshot) {
-      throw new NotFoundException('Room not found after ready update');
-    }
-
-    this.roomEventsService.emitRoomSnapshot(snapshot);
+    const gameTypes = await this.roomsRepository.listGameTypes();
 
     return {
-      message: !member.is_ready ? 'Ready set successfully' : 'Ready removed successfully',
-      room: snapshot,
+      gameTypes: gameTypes.map((gameType) => ({
+        gameTypeId: gameType.game_type_id,
+        gameCode: gameType.game_code,
+        gameName: gameType.game_name,
+        minPlayers: gameType.min_players,
+        maxPlayers: gameType.max_players,
+      })),
     };
-  } catch (error) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      // ignore
+  }
+
+  async toggleReady(roomId: string, userId: string) {
+    const room = await this.roomsRepository.findRoomById(roomId);
+
+    if (!room) {
+      throw new NotFoundException('Room not found');
     }
-    throw error;
-  } finally {
-    client.release();
+
+    if (room.room_status !== 'waiting') {
+      throw new ConflictException('Room is no longer waiting');
+    }
+
+    const member = await this.roomsRepository.findRoomPlayerByUserId(roomId, userId);
+    if (!member) {
+      throw new ForbiddenException('You are not a member of this room');
+    }
+
+    const client: PoolClient = await this.db.getPool().connect();
+
+    try {
+      await client.query('BEGIN');
+
+      await this.roomsRepository.updateRoomPlayerReady(
+        client,
+        roomId,
+        userId,
+        !member.is_ready,
+      );
+
+      await client.query('COMMIT');
+
+      const snapshot = await this.getRoomSnapshotInternal(roomId);
+      if (!snapshot) {
+        throw new NotFoundException('Room not found after ready update');
+      }
+
+      this.roomEventsService.emitRoomSnapshot(snapshot);
+
+      return {
+        message: !member.is_ready ? 'Ready set successfully' : 'Ready removed successfully',
+        room: snapshot,
+      };
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
-}
 
-async startMatch(roomId: string, actorUserId: string) {
-  const room = await this.roomsRepository.findRoomById(roomId);
+  async startMatch(roomId: string, actorUserId: string) {
+    const room = await this.roomsRepository.findRoomById(roomId);
 
-  if (!room) {
-    throw new NotFoundException('Room not found');
-  }
+    if (!room) {
+      throw new NotFoundException('Room not found');
+    }
 
-  if (room.room_status !== 'waiting') {
-    throw new ConflictException('Match already started or room unavailable');
-  }
+    if (room.room_status !== 'waiting') {
+      throw new ConflictException('Match already started or room unavailable');
+    }
 
-  if (room.host_user_id !== actorUserId) {
-    throw new ForbiddenException('Only the host can start the match');
-  }
+    if (room.host_user_id !== actorUserId) {
+      throw new ForbiddenException('Only the host can start the match');
+    }
 
-  const gameType = await this.roomsRepository.findGameTypeById(room.game_type_id);
-  if (!gameType) {
-    throw new NotFoundException('Game type not found');
-  }
+    const gameType = await this.roomsRepository.findGameTypeById(room.game_type_id);
+    if (!gameType) {
+      throw new NotFoundException('Game type not found');
+    }
 
-  const members = await this.roomsRepository.getRoomMembers(roomId);
+    const members = await this.roomsRepository.getRoomMembers(roomId);
 
-  if (members.length < 2) {
-    throw new ConflictException('At least 2 players are required');
-  }
+    if (members.length < 2) {
+      throw new ConflictException('At least 2 players are required');
+    }
 
-  const notReadyMembers = members.filter((member) => !member.is_ready);
-  if (notReadyMembers.length > 0) {
-    throw new ConflictException('All players must be ready before starting');
-  }
+    const notReadyMembers = members.filter((member) => !member.is_ready);
+    if (notReadyMembers.length > 0) {
+      throw new ConflictException('All players must be ready before starting');
+    }
 
-  const sortedMembers = [...members].sort((a, b) => {
-    const seatA = a.seat_no ?? Number.MAX_SAFE_INTEGER;
-    const seatB = b.seat_no ?? Number.MAX_SAFE_INTEGER;
-    return seatA - seatB;
-  });
-
-  const engine = this.gameEngineRegistry.get(gameType.game_code);
-
-  const gamePlayers = sortedMembers.map((member) => ({
-    userId: member.user_id,
-    seatNo: member.seat_no ?? 1,
-  }));
-
-  const { initialState, startingPlayerUserId } =
-    engine.createInitialState(gamePlayers);
-
-  const initialStateText = JSON.stringify(initialState);
-  const currentStateText = initialStateText;
-
-  const client: PoolClient = await this.db.getPool().connect();
-
-  try {
-    const matchId = randomUUID();
-
-    await client.query('BEGIN');
-
-    await this.roomsRepository.insertMatch(client, {
-      matchId,
-      roomId: room.room_id,
-      gameTypeId: room.game_type_id,
-      startedByUserId: actorUserId,
-      currentPlayerUserId: startingPlayerUserId,
-      initialStateText,
-      currentStateText,
+    const sortedMembers = [...members].sort((a, b) => {
+      const seatA = a.seat_no ?? Number.MAX_SAFE_INTEGER;
+      const seatB = b.seat_no ?? Number.MAX_SAFE_INTEGER;
+      return seatA - seatB;
     });
 
-    for (const member of sortedMembers) {
-      await this.roomsRepository.insertMatchPlayer(client, {
-        matchPlayerId: randomUUID(),
-        matchId,
-        userId: member.user_id,
-        seatNo: member.seat_no ?? 1,
-      });
-    }
+    await this.participationService.assertUsersCanStartMatch(
+      sortedMembers.map((member) => member.user_id),
+      roomId,
+    );
 
-    await this.roomsRepository.updateRoomStatus(client, roomId, 'in_game');
+    const engine = this.gameEngineRegistry.get(gameType.game_code);
 
-    await client.query('COMMIT');
+    const gamePlayers = sortedMembers.map((member) => ({
+      userId: member.user_id,
+      seatNo: member.seat_no ?? 1,
+    }));
 
-    const snapshot = await this.getRoomSnapshotInternal(roomId);
-    if (!snapshot) {
-      throw new NotFoundException('Room not found after starting match');
-    }
+    const { initialState, startingPlayerUserId } =
+      engine.createInitialState(gamePlayers);
 
-    this.roomEventsService.emitRoomSnapshot(snapshot);
-    this.roomEventsService.emitRoomStarted(roomId, matchId);
+    const initialStateText = JSON.stringify(initialState);
+    const currentStateText = initialStateText;
 
-    return {
-      message: 'Match started successfully',
-      room: snapshot,
-      matchId,
-    };
-  } catch (error) {
+    const client: PoolClient = await this.db.getPool().connect();
+
     try {
-      await client.query('ROLLBACK');
-    } catch {
-      // ignore
+      const matchId = randomUUID();
+
+      await client.query('BEGIN');
+
+      await this.roomsRepository.insertMatch(client, {
+        matchId,
+        roomId: room.room_id,
+        gameTypeId: room.room_id ? room.game_type_id : room.game_type_id,
+        startedByUserId: actorUserId,
+        currentPlayerUserId: startingPlayerUserId,
+        initialStateText,
+        currentStateText,
+      });
+
+      for (const member of sortedMembers) {
+        await this.roomsRepository.insertMatchPlayer(client, {
+          matchPlayerId: randomUUID(),
+          matchId,
+          userId: member.user_id,
+          seatNo: member.seat_no ?? 1,
+        });
+
+        await this.participationService.acquireMatchMembership(
+          client,
+          member.user_id,
+          matchId,
+        );
+      }
+
+      await this.roomsRepository.updateRoomStatus(client, roomId, 'in_game');
+
+      await client.query('COMMIT');
+
+      const snapshot = await this.getRoomSnapshotInternal(roomId);
+      if (!snapshot) {
+        throw new NotFoundException('Room not found after starting match');
+      }
+
+      this.roomEventsService.emitRoomSnapshot(snapshot);
+      this.roomEventsService.emitRoomStarted(roomId, matchId);
+
+      return {
+        message: 'Match started successfully',
+        room: snapshot,
+        matchId,
+      };
+    } catch (error: any) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore
+      }
+
+      if (error?.code === '23505') {
+        const constraint = String(error?.constraint ?? '');
+
+        if (constraint === 'uq_active_match_memberships_user') {
+          throw new ConflictException(
+            'One or more players are already in another active match',
+          );
+        }
+      }
+
+      throw error;
+    } finally {
+      client.release();
     }
-    throw error;
-  } finally {
-    client.release();
   }
-}
 }
