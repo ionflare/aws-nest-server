@@ -25,7 +25,7 @@ import { RoomEventsService } from '../rooms/room-events.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { MatchesService } from '../matches/matches.service';
 import { PlayMoveDto } from '../matches/dto/play-move.dto';
-
+import { MatchEventsService } from '../matches/match-events.service';
 type JwtUserPayload = {
   sub: string;
   username: string;
@@ -46,12 +46,11 @@ interface AuthenticatedSocket extends WebSocket {
 })
 export class RealtimeGateway
   implements
-    OnGatewayInit,
-    OnGatewayConnection,
-    OnGatewayDisconnect,
-    OnModuleInit,
-    OnModuleDestroy
-{
+  OnGatewayInit,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  OnModuleInit,
+  OnModuleDestroy {
   private readonly logger = new Logger(RealtimeGateway.name);
   private heartbeatTimer?: NodeJS.Timeout;
   private readonly listenerCleanupFns: Array<() => void> = [];
@@ -68,7 +67,8 @@ export class RealtimeGateway
     private readonly roomsService: RoomsService,
     private readonly roomEventsService: RoomEventsService,
     private readonly matchesService: MatchesService,
-  ) {}
+    private readonly matchEventsService: MatchEventsService,
+  ) { }
 
   onModuleInit() {
     this.listenerCleanupFns.push(
@@ -120,12 +120,40 @@ export class RealtimeGateway
     );
 
     this.listenerCleanupFns.push(
-     this.roomEventsService.onRoomStarted(({ roomId, matchId }) => {
-      this.broadcastToChannel(
-        this.buildRoomChannel(roomId),
-         'room_started',
-        { roomId, matchId },
-       );
+      this.roomEventsService.onRoomStarted(({ roomId, matchId }) => {
+        this.broadcastToChannel(
+          this.buildRoomChannel(roomId),
+          'room_started',
+          { roomId, matchId },
+        );
+      }),
+    );
+
+    this.listenerCleanupFns.push(
+      this.matchEventsService.onMatchStateUpdated(async ({ matchId }) => {
+        const members = this.channelMembers.get(this.buildMatchChannel(matchId));
+        if (!members || members.size === 0) {
+          return;
+        }
+
+        const firstClient = [...members][0];
+        const viewerUserId = firstClient.user?.sub;
+
+        if (!viewerUserId) {
+          return;
+        }
+
+        try {
+          const result = await this.matchesService.getMatch(matchId, viewerUserId);
+
+          this.broadcastToChannel(
+            this.buildMatchChannel(matchId),
+            'match_state_updated',
+            result.match,
+          );
+        } catch {
+          // ignore if fetch/broadcast fails
+        }
       }),
     );
   }
@@ -425,27 +453,27 @@ export class RealtimeGateway
 
   @SubscribeMessage('match_subscribe')
   async handleMatchSubscribe(
-  @ConnectedSocket() client: AuthenticatedSocket,
-  @MessageBody() data: { matchId?: string },
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { matchId?: string },
   ) {
-  const userId = client.user?.sub;
-  if (!userId) {
-    throw new WsException('Unauthorized');
-  }
+    const userId = client.user?.sub;
+    if (!userId) {
+      throw new WsException('Unauthorized');
+    }
 
-  if (!data.matchId) {
-    throw new WsException('matchId is required');
-  }
+    if (!data.matchId) {
+      throw new WsException('matchId is required');
+    }
 
-  const result = await this.matchesService.getMatch(data.matchId, userId);
+    const result = await this.matchesService.getMatch(data.matchId, userId);
 
-  const channel = this.buildMatchChannel(data.matchId);
-  this.addClientToChannel(client, channel);
+    const channel = this.buildMatchChannel(data.matchId);
+    this.addClientToChannel(client, channel);
 
-  return {
-    event: 'match_state_updated',
-    data: result.match,
-  };
+    return {
+      event: 'match_state_updated',
+      data: result.match,
+    };
   }
 
   @SubscribeMessage('match_unsubscribe')
@@ -453,56 +481,56 @@ export class RealtimeGateway
     @ConnectedSocket() client: AuthenticatedSocket,
     @MessageBody() data: { matchId?: string },
   ) {
-  if (!data.matchId) {
-    throw new WsException('matchId is required');
+    if (!data.matchId) {
+      throw new WsException('matchId is required');
+    }
+
+    const channel = this.buildMatchChannel(data.matchId);
+    const members = this.channelMembers.get(channel);
+
+    members?.delete(client);
+    client.subscriptions?.delete(channel);
+
+    if (members && members.size === 0) {
+      this.channelMembers.delete(channel);
+    }
+
+    return {
+      event: 'match_unsubscribed',
+      data: { matchId: data.matchId },
+    };
   }
-
-  const channel = this.buildMatchChannel(data.matchId);
-  const members = this.channelMembers.get(channel);
-
-  members?.delete(client);
-  client.subscriptions?.delete(channel);
-
-  if (members && members.size === 0) {
-    this.channelMembers.delete(channel);
-  }
-
-  return {
-    event: 'match_unsubscribed',
-    data: { matchId: data.matchId },
-  };
- }
 
   @SubscribeMessage('play_move')
   async handlePlayMove(
     @ConnectedSocket() client: AuthenticatedSocket,
     @MessageBody() data: PlayMoveDto,
   ) {
-  const userId = client.user?.sub;
-  if (!userId) {
-    throw new WsException('Unauthorized');
-  }
+    const userId = client.user?.sub;
+    if (!userId) {
+      throw new WsException('Unauthorized');
+    }
 
-  try {
-    const result = await this.matchesService.playMove(userId, data);
+    try {
+      const result = await this.matchesService.playMove(userId, data);
 
-    this.broadcastToChannel(
-      this.buildMatchChannel(data.matchId),
-      'match_state_updated',
-      result.match,
-    );
+      this.broadcastToChannel(
+        this.buildMatchChannel(data.matchId),
+        'match_state_updated',
+        result.match,
+      );
 
-    return {
-      event: 'move_played',
-      data: {
-        matchId: data.matchId,
-      },
-    };
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Failed to play move';
-    throw new WsException(message);
-  }
+      return {
+        event: 'move_played',
+        data: {
+          matchId: data.matchId,
+        },
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to play move';
+      throw new WsException(message);
+    }
   }
 
   onModuleDestroy() {

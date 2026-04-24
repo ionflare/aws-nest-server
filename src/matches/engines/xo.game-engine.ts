@@ -21,6 +21,7 @@ export type XoState = {
   isDraw: boolean;
   status: 'active' | 'finished';
   winningLine: number[] | null;
+  endedReason?: 'win' | 'draw' | 'timeout';
 };
 
 export type XoMove = {
@@ -58,6 +59,7 @@ export class XoGameEngine implements GameEngine<XoState, XoMove> {
       isDraw: false,
       status: 'active',
       winningLine: null,
+      endedReason: undefined,
     };
 
     return {
@@ -123,6 +125,7 @@ export class XoGameEngine implements GameEngine<XoState, XoMove> {
       isDraw,
       status: finished ? 'finished' : 'active',
       winningLine,
+      endedReason: winningLine ? 'win' : isDraw ? 'draw' : undefined,
     };
 
     return {
@@ -134,6 +137,47 @@ export class XoGameEngine implements GameEngine<XoState, XoMove> {
       movePayload: {
         cellIndex: move.cellIndex,
         symbol,
+      },
+    };
+  }
+
+  resolveTimeout(params: {
+    state: XoState;
+    timedOutUserId: string;
+    players: GamePlayer[];
+    currentPlayerUserId: string | null;
+  }): ApplyMoveResult<XoState> {
+    const { state, timedOutUserId } = params;
+
+    if (state.status !== 'active') {
+      throw new ConflictException('Match is already finished');
+    }
+
+    const winnerUserId = this.getOtherUserId(state, timedOutUserId);
+    const winnerSymbol = winnerUserId
+      ? this.getUserSymbol(state, winnerUserId)
+      : null;
+
+    const nextState: XoState = {
+      ...state,
+      nextUserId: null,
+      winnerUserId,
+      winnerSymbol,
+      isDraw: false,
+      status: 'finished',
+      winningLine: null,
+      endedReason: 'timeout',
+    };
+
+    return {
+      nextState,
+      nextPlayerUserId: null,
+      finished: true,
+      winnerUserId,
+      moveType: 'timeout_forfeit',
+      movePayload: {
+        timedOutUserId,
+        winnerUserId,
       },
     };
   }

@@ -37,4 +37,11 @@ export interface GameEngine<TState = unknown, TMove = unknown> {
     players: GamePlayer[];
     currentPlayerUserId: string | null;
   }): ApplyMoveResult<TState>;
+
+  resolveTimeout(params: {
+    state: TState;
+    timedOutUserId: string;
+    players: GamePlayer[];
+    currentPlayerUserId: string | null;
+  }): ApplyMoveResult<TState>;
 }

@@ -15,6 +15,8 @@ export type MatchInternalRow = QueryResultRow & {
   current_turn_no: number;
   current_player_user_id: string | null;
   winner_user_id: string | null;
+  turn_time_limit_sec: number;
+  turn_expires_at: string | null;
   started_at: string | null;
   ended_at: string | null;
   initial_state_text: string | null;
@@ -39,6 +41,7 @@ export type GameTypeLiteRow = QueryResultRow & {
   game_type_id: string;
   game_code: string;
   game_name: string;
+  turn_timeout_sec: number;
 };
 
 @Injectable()
@@ -59,6 +62,8 @@ export class MatchesRepository {
         current_turn_no,
         current_player_user_id,
         winner_user_id,
+        turn_time_limit_sec,
+        turn_expires_at,
         started_at,
         ended_at,
         initial_state_text,
@@ -80,7 +85,8 @@ export class MatchesRepository {
       SELECT
         game_type_id,
         game_code,
-        game_name
+        game_name,
+        turn_timeout_sec
       FROM boardgame_prod.game_types
       WHERE game_type_id = $1
       LIMIT 1
@@ -133,6 +139,40 @@ export class MatchesRepository {
     return result.rows;
   }
 
+  async listExpiredActiveMatches(limit = 20): Promise<MatchInternalRow[]> {
+    const result = await this.db.query<MatchInternalRow>(
+      `
+      SELECT
+        match_id,
+        room_id,
+        game_type_id,
+        started_by_user_id,
+        match_status,
+        match_mode,
+        ranked_flag,
+        current_turn_no,
+        current_player_user_id,
+        winner_user_id,
+        turn_time_limit_sec,
+        turn_expires_at,
+        started_at,
+        ended_at,
+        initial_state_text,
+        current_state_text,
+        created_at
+      FROM boardgame_prod.matches
+      WHERE match_status = 'active'
+        AND turn_expires_at IS NOT NULL
+        AND turn_expires_at <= CURRENT_TIMESTAMP
+      ORDER BY turn_expires_at ASC
+      LIMIT $1
+      `,
+      [limit],
+    );
+
+    return result.rows;
+  }
+
   async insertMatchMove(
     executor: Queryable,
     params: {
@@ -174,7 +214,7 @@ export class MatchesRepository {
     );
   }
 
-  async updateMatchAfterMove(
+  async updateMatchState(
     executor: Queryable,
     params: {
       matchId: string;
@@ -183,6 +223,7 @@ export class MatchesRepository {
       currentPlayerUserId: string | null;
       winnerUserId: string | null;
       currentStateText: string;
+      turnExpiresAt: Date | null;
       finished: boolean;
     },
   ): Promise<void> {
@@ -195,7 +236,8 @@ export class MatchesRepository {
         current_player_user_id = $4,
         winner_user_id = $5,
         current_state_text = $6,
-        ended_at = CASE WHEN $7 THEN CURRENT_TIMESTAMP ELSE ended_at END
+        turn_expires_at = $7,
+        ended_at = CASE WHEN $8 THEN CURRENT_TIMESTAMP ELSE ended_at END
       WHERE match_id = $1
       `,
       [
@@ -205,6 +247,7 @@ export class MatchesRepository {
         params.currentPlayerUserId,
         params.winnerUserId,
         params.currentStateText,
+        params.turnExpiresAt,
         params.finished,
       ],
     );

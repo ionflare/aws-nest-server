@@ -51,7 +51,7 @@ export type RoomPlayerInternalRow = QueryResultRow & {
 
 @Injectable()
 export class RoomsRepository {
-  constructor(private readonly db: AuroraDsqlService) {}
+  constructor(private readonly db: AuroraDsqlService) { }
 
   async findGameTypeById(gameTypeId: string): Promise<GameTypeRow | null> {
     const result = await this.db.query<GameTypeRow>(
@@ -405,8 +405,8 @@ export class RoomsRepository {
     );
   }
   async listGameTypes(): Promise<GameTypeRow[]> {
-  const result = await this.db.query<GameTypeRow>(
-    `
+    const result = await this.db.query<GameTypeRow>(
+      `
     SELECT
       game_type_id,
       game_code,
@@ -416,58 +416,60 @@ export class RoomsRepository {
     FROM boardgame_prod.game_types
     ORDER BY game_name ASC
     `,
-  );
+    );
 
-  return result.rows;
- }
+    return result.rows;
+  }
 
- async updateRoomPlayerReady(
-  executor: Queryable,
-  roomId: string,
-  userId: string,
-  isReady: boolean,
-): Promise<void> {
-  await executor.query(
-    `
+  async updateRoomPlayerReady(
+    executor: Queryable,
+    roomId: string,
+    userId: string,
+    isReady: boolean,
+  ): Promise<void> {
+    await executor.query(
+      `
     UPDATE boardgame_prod.room_players
     SET is_ready = $3
     WHERE room_id = $1
       AND user_id = $2
     `,
-    [roomId, userId, isReady],
-  );
-}
+      [roomId, userId, isReady],
+    );
+  }
 
-async updateRoomStatus(
-  executor: Queryable,
-  roomId: string,
-  roomStatus: string,
-): Promise<void> {
-  await executor.query(
-    `
+  async updateRoomStatus(
+    executor: Queryable,
+    roomId: string,
+    roomStatus: string,
+  ): Promise<void> {
+    await executor.query(
+      `
     UPDATE boardgame_prod.game_rooms
     SET room_status = $2,
         updated_at = CURRENT_TIMESTAMP
     WHERE room_id = $1
     `,
-    [roomId, roomStatus],
-  );
-}
+      [roomId, roomStatus],
+    );
+  }
 
-async insertMatch(
-  executor: Queryable,
-  params: {
-    matchId: string;
-    roomId: string;
-    gameTypeId: string;
-    startedByUserId: string;
-    currentPlayerUserId: string | null;
-    initialStateText?: string | null;
-    currentStateText?: string | null;
-  },
-): Promise<{ match_id: string }> {
-  const result = await executor.query<{ match_id: string }>(
-    `
+  async insertMatch(
+    executor: Queryable,
+    params: {
+      matchId: string;
+      roomId: string;
+      gameTypeId: string;
+      startedByUserId: string;
+      currentPlayerUserId: string | null;
+      turnTimeLimitSec: number;
+      turnExpiresAt: Date | null;
+      initialStateText?: string | null;
+      currentStateText?: string | null;
+    },
+  ): Promise<{ match_id: string }> {
+    const result = await executor.query<{ match_id: string }>(
+      `
     INSERT INTO boardgame_prod.matches (
       match_id,
       room_id,
@@ -478,6 +480,8 @@ async insertMatch(
       ranked_flag,
       current_turn_no,
       current_player_user_id,
+      turn_time_limit_sec,
+      turn_expires_at,
       started_at,
       initial_state_text,
       current_state_text,
@@ -490,39 +494,43 @@ async insertMatch(
       false,
       1,
       $5,
-      CURRENT_TIMESTAMP,
       $6,
       $7,
+      CURRENT_TIMESTAMP,
+      $8,
+      $9,
       CURRENT_TIMESTAMP
     )
     RETURNING match_id
     `,
-    [
-      params.matchId,
-      params.roomId,
-      params.gameTypeId,
-      params.startedByUserId,
-      params.currentPlayerUserId,
-      params.initialStateText ?? null,
-      params.currentStateText ?? null,
-    ],
-  );
+      [
+        params.matchId,
+        params.roomId,
+        params.gameTypeId,
+        params.startedByUserId,
+        params.currentPlayerUserId,
+        params.turnTimeLimitSec,
+        params.turnExpiresAt,
+        params.initialStateText ?? null,
+        params.currentStateText ?? null,
+      ],
+    );
 
-  return result.rows[0];
-}
+    return result.rows[0];
+  }
 
-async insertMatchPlayer(
-  executor: Queryable,
-  params: {
-    matchPlayerId: string;
-    matchId: string;
-    userId: string;
-    seatNo: number;
-    isBot?: boolean;
-  },
-): Promise<void> {
-  await executor.query(
-    `
+  async insertMatchPlayer(
+    executor: Queryable,
+    params: {
+      matchPlayerId: string;
+      matchId: string;
+      userId: string;
+      seatNo: number;
+      isBot?: boolean;
+    },
+  ): Promise<void> {
+    await executor.query(
+      `
     INSERT INTO boardgame_prod.match_players (
       match_player_id,
       match_id,
@@ -535,13 +543,13 @@ async insertMatchPlayer(
     )
     VALUES ($1, $2, $3, $4, $5, false, 0, CURRENT_TIMESTAMP)
     `,
-    [
-      params.matchPlayerId,
-      params.matchId,
-      params.userId,
-      params.seatNo,
-      params.isBot ?? false,
-    ],
-  );
-}
+      [
+        params.matchPlayerId,
+        params.matchId,
+        params.userId,
+        params.seatNo,
+        params.isBot ?? false,
+      ],
+    );
+  }
 }

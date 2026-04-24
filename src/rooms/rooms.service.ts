@@ -643,12 +643,20 @@ export class RoomsService {
 
       await client.query('BEGIN');
 
+      const turnTimeLimitSec = gameType.turn_timeout_sec;
+      const turnExpiresAt =
+        startingPlayerUserId && turnTimeLimitSec > 0
+          ? new Date(Date.now() + turnTimeLimitSec * 1000)
+          : null;
+
       await this.roomsRepository.insertMatch(client, {
         matchId,
         roomId: room.room_id,
-        gameTypeId: room.room_id ? room.game_type_id : room.game_type_id,
+        gameTypeId: room.game_type_id,
         startedByUserId: actorUserId,
         currentPlayerUserId: startingPlayerUserId,
+        turnTimeLimitSec,
+        turnExpiresAt,
         initialStateText,
         currentStateText,
       });
