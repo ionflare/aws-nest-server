@@ -533,6 +533,42 @@ export class RealtimeGateway
     }
   }
 
+  @SubscribeMessage('concede_match')
+  async handleConcedeMatch(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() data: { matchId?: string },
+  ) {
+    const userId = client.user?.sub;
+    if (!userId) {
+      throw new WsException('Unauthorized');
+    }
+
+    if (!data.matchId) {
+      throw new WsException('matchId is required');
+    }
+
+    try {
+      const result = await this.matchesService.concedeMatch(data.matchId, userId);
+
+      this.broadcastToChannel(
+        this.buildMatchChannel(data.matchId),
+        'match_state_updated',
+        result.match,
+      );
+
+      return {
+        event: 'match_conceded',
+        data: {
+          matchId: data.matchId,
+          concededUserId: userId,
+        },
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to concede match';
+      throw new WsException(message);
+    }
+  }
   onModuleDestroy() {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);

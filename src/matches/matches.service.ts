@@ -219,6 +219,91 @@ export class MatchesService {
     return this.getMatch(dto.matchId, userId);
   }
 
+  async concedeMatch(matchId: string, userId: string) {
+    const isMember = await this.matchesRepository.isMatchMember(matchId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this match');
+    }
+
+    const match = await this.matchesRepository.findMatchById(matchId);
+    if (!match) {
+      throw new NotFoundException('Match not found');
+    }
+
+    if (match.match_status !== 'active') {
+      throw new ConflictException('Match is not active');
+    }
+
+    const gameType = await this.matchesRepository.findGameTypeById(match.game_type_id);
+    if (!gameType) {
+      throw new NotFoundException('Game type not found');
+    }
+
+    const engine = this.gameEngineRegistry.get(gameType.game_code);
+    const players = await this.matchesRepository.getMatchPlayers(matchId);
+    const gamePlayers = this.toGamePlayers(players);
+
+    const currentState = match.current_state_text
+      ? JSON.parse(match.current_state_text)
+      : null;
+
+    if (!currentState) {
+      throw new ConflictException('Match has no current state');
+    }
+
+    const result = engine.resolveConcede({
+      state: currentState,
+      concededUserId: userId,
+      players: gamePlayers,
+      currentPlayerUserId: match.current_player_user_id,
+    });
+
+    const client: PoolClient = await this.db.getPool().connect();
+
+    try {
+      await client.query('BEGIN');
+
+      await this.matchesRepository.insertMatchMove(client, {
+        moveId: randomUUID(),
+        matchId,
+        turnNo: match.current_turn_no,
+        actionNo: 1,
+        userId,
+        moveType: result.moveType,
+        movePayloadText: JSON.stringify(result.movePayload),
+        stateAfterText: JSON.stringify(result.nextState),
+      });
+
+      await this.matchesRepository.updateMatchState(client, {
+        matchId,
+        matchStatus: 'finished',
+        currentTurnNo: match.current_turn_no,
+        currentPlayerUserId: null,
+        winnerUserId: result.winnerUserId,
+        currentStateText: JSON.stringify(result.nextState),
+        turnExpiresAt: null,
+        finished: true,
+      });
+
+      await this.participationService.releaseMatchMembershipsForMatch(client, matchId);
+
+      await client.query('COMMIT');
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    this.matchEventsService.emitMatchStateUpdated(matchId);
+
+    return this.getMatch(matchId, userId);
+  }
+
   async resolveTimeout(matchId: string): Promise<void> {
     const match = await this.matchesRepository.findMatchById(matchId);
     if (!match) return;

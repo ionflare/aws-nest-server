@@ -44,4 +44,11 @@ export interface GameEngine<TState = unknown, TMove = unknown> {
     players: GamePlayer[];
     currentPlayerUserId: string | null;
   }): ApplyMoveResult<TState>;
+
+  resolveConcede(params: {
+    state: TState;
+    concededUserId: string;
+    players: GamePlayer[];
+    currentPlayerUserId: string | null;
+  }): ApplyMoveResult<TState>;
 }

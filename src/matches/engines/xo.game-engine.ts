@@ -21,7 +21,7 @@ export type XoState = {
   isDraw: boolean;
   status: 'active' | 'finished';
   winningLine: number[] | null;
-  endedReason?: 'win' | 'draw' | 'timeout';
+  endedReason?: 'win' | 'draw' | 'timeout' | 'concede';
 };
 
 export type XoMove = {
@@ -177,6 +177,47 @@ export class XoGameEngine implements GameEngine<XoState, XoMove> {
       moveType: 'timeout_forfeit',
       movePayload: {
         timedOutUserId,
+        winnerUserId,
+      },
+    };
+  }
+
+  resolveConcede(params: {
+    state: XoState;
+    concededUserId: string;
+    players: GamePlayer[];
+    currentPlayerUserId: string | null;
+  }): ApplyMoveResult<XoState> {
+    const { state, concededUserId } = params;
+
+    if (state.status !== 'active') {
+      throw new ConflictException('Match is already finished');
+    }
+
+    const winnerUserId = this.getOtherUserId(state, concededUserId);
+    const winnerSymbol = winnerUserId
+      ? this.getUserSymbol(state, winnerUserId)
+      : null;
+
+    const nextState: XoState = {
+      ...state,
+      nextUserId: null,
+      winnerUserId,
+      winnerSymbol,
+      isDraw: false,
+      status: 'finished',
+      winningLine: null,
+      endedReason: 'concede',
+    };
+
+    return {
+      nextState,
+      nextPlayerUserId: null,
+      finished: true,
+      winnerUserId,
+      moveType: 'concede',
+      movePayload: {
+        concededUserId,
         winnerUserId,
       },
     };
