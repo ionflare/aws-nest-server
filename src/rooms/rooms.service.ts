@@ -643,7 +643,7 @@ export class RoomsService {
 
       await client.query('BEGIN');
 
-      const turnTimeLimitSec = gameType.turn_timeout_sec;
+      const turnTimeLimitSec = gameType.turn_timeout_sec ?? 60;
       const turnExpiresAt =
         startingPlayerUserId && turnTimeLimitSec > 0
           ? new Date(Date.now() + turnTimeLimitSec * 1000)

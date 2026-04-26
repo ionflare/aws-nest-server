@@ -10,6 +10,7 @@ export type GameTypeRow = QueryResultRow & {
   game_name: string;
   min_players: number;
   max_players: number;
+  turn_timeout_sec: number | null;
 };
 
 export type RoomInternalRow = QueryResultRow & {
@@ -56,16 +57,17 @@ export class RoomsRepository {
   async findGameTypeById(gameTypeId: string): Promise<GameTypeRow | null> {
     const result = await this.db.query<GameTypeRow>(
       `
-      SELECT
-        game_type_id,
-        game_code,
-        game_name,
-        min_players,
-        max_players
-      FROM boardgame_prod.game_types
-      WHERE game_type_id = $1
-      LIMIT 1
-      `,
+    SELECT
+      game_type_id,
+      game_code,
+      game_name,
+      min_players,
+      max_players,
+      turn_timeout_sec
+    FROM boardgame_prod.game_types
+    WHERE game_type_id = $1
+    LIMIT 1
+    `,
       [gameTypeId],
     );
 
