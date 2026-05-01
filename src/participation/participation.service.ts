@@ -9,6 +9,18 @@ export class ParticipationService {
     private readonly participationRepository: ParticipationRepository,
   ) {}
 
+  async getResumeContext(userId: string) {
+    const [activeRoom, activeMatch] = await Promise.all([
+      this.participationRepository.findActiveRoomMembershipByUserId(userId),
+      this.participationRepository.findActiveMatchMembershipByUserId(userId),
+    ]);
+
+    return {
+      activeRoomId: activeRoom?.room_id ?? null,
+      activeMatchId: activeMatch?.match_id ?? null,
+    };
+  }
+
   async assertCanEnterRoom(userId: string, targetRoomId?: string): Promise<void> {
     const [activeRoom, activeMatch] = await Promise.all([
       this.participationRepository.findActiveRoomMembershipByUserId(userId),
