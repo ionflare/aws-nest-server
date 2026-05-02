@@ -431,7 +431,7 @@ export class MatchmakingService {
     const proposedMatch =
       await this.matchmakingRepository.findWaitingProposedMatchByUserId(userId);
 
-    let proposedMatchView = null;
+    let proposedMatchView: | ReturnType<MatchmakingService['toProposedMatchResponse']> | null = null;
 
     if (proposedMatch) {
       const entries =
