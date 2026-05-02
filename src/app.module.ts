@@ -9,6 +9,7 @@ import { RoomsModule } from './rooms/rooms.module';
 import { MatchesModule } from './matches/matches.module';
 import { ParticipationModule } from './participation/participation.module';
 import { PartiesModule } from './parties/parties.module';
+import { MatchmakingModule } from './matchmaking/matchmaking.module';
 
 @Module({
   imports: [
@@ -21,7 +22,8 @@ import { PartiesModule } from './parties/parties.module';
     RoomsModule,
     MatchesModule,
     ParticipationModule,
-    PartiesModule
+    PartiesModule,
+    MatchmakingModule,
   ],
 })
 export class AppModule {}
