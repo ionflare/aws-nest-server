@@ -8,6 +8,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { MatchesModule } from './matches/matches.module';
 import { ParticipationModule } from './participation/participation.module';
+import { PartiesModule } from './parties/parties.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ParticipationModule } from './participation/participation.module';
     RoomsModule,
     MatchesModule,
     ParticipationModule,
+    PartiesModule
   ],
 })
 export class AppModule {}
