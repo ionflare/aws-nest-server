@@ -12,8 +12,8 @@ export type MatchmakingTicketRow = QueryResultRow & {
   team_size: number;
   ticket_status: string;
   created_by_user_id: string;
-  created_at: string;
-  updated_at: string;
+  created_at: string | Date;
+  updated_at: string | Date;
 };
 
 export type MatchmakingTicketSummaryRow = MatchmakingTicketRow & {
@@ -34,8 +34,8 @@ export type ProposedMatchRow = QueryResultRow & {
   game_type_id: string;
   team_size: number;
   proposed_status: string;
-  accept_deadline_at: string;
-  created_at: string;
+  accept_deadline_at: string | Date;
+  created_at: string | Date;
 };
 
 export type ProposedMatchEntryRow = QueryResultRow & {
