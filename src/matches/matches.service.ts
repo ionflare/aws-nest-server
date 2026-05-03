@@ -26,7 +26,7 @@ export class MatchesService {
     private readonly gameEngineRegistry: GameEngineRegistry,
     private readonly participationService: ParticipationService,
     private readonly matchEventsService: MatchEventsService,
-  ) {}
+  ) { }
 
   private toGamePlayers(players: MatchPlayerInternalRow[]): GamePlayer[] {
     return players.map((player) => ({
@@ -388,6 +388,84 @@ export class MatchesService {
 
     for (const match of expiredMatches) {
       await this.resolveTimeout(match.match_id);
+    }
+  }
+
+  async createDirectMatch(params: {
+    gameTypeId: string;
+    players: GamePlayer[];
+    startedByUserId: string;
+    roomId?: string | null;
+  }) {
+    const gameType = await this.matchesRepository.findGameTypeById(params.gameTypeId);
+
+    if (!gameType) {
+      throw new NotFoundException('Game type not found');
+    }
+
+    const engine = this.gameEngineRegistry.get(gameType.game_code);
+
+    const sortedPlayers = [...params.players].sort((a, b) => a.seatNo - b.seatNo);
+
+    const { initialState, startingPlayerUserId } =
+      engine.createInitialState(sortedPlayers);
+
+    const initialStateText = JSON.stringify(initialState);
+    const currentStateText = initialStateText;
+
+    const turnTimeLimitSec = gameType.turn_timeout_sec ?? 60;
+    const turnExpiresAt =
+      startingPlayerUserId && turnTimeLimitSec > 0
+        ? new Date(Date.now() + turnTimeLimitSec * 1000)
+        : null;
+
+    const matchId = randomUUID();
+    const client: PoolClient = await this.db.getPool().connect();
+
+    try {
+      await client.query('BEGIN');
+
+      await this.matchesRepository.insertMatch(client, {
+        matchId,
+        roomId: params.roomId ?? null,
+        gameTypeId: params.gameTypeId,
+        startedByUserId: params.startedByUserId,
+        currentPlayerUserId: startingPlayerUserId,
+        turnTimeLimitSec,
+        turnExpiresAt,
+        initialStateText,
+        currentStateText,
+      });
+
+      for (const player of sortedPlayers) {
+        await this.matchesRepository.insertMatchPlayer(client, {
+          matchPlayerId: randomUUID(),
+          matchId,
+          userId: player.userId,
+          seatNo: player.seatNo,
+        });
+
+        await this.participationService.acquireMatchMembership(
+          client,
+          player.userId,
+          matchId,
+        );
+      }
+
+      await client.query('COMMIT');
+
+      return {
+        matchId,
+      };
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore
+      }
+      throw error;
+    } finally {
+      client.release();
     }
   }
 }

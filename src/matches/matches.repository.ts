@@ -253,65 +253,107 @@ export class MatchesRepository {
     );
   }
 
-  private async failProposedMatch(
-    proposedMatchId: string,
-    failingTicketIds: string[],
-  ) {
-    const proposedMatch =
-      await this.matchmakingRepository.findProposedMatchById(proposedMatchId);
-
-    if (!proposedMatch) {
-      return null;
-    }
-
-    const entries =
-      await this.matchmakingRepository.getProposedMatchEntries(proposedMatchId);
-
-    const involvedTicketIds = [...new Set(entries.map((entry) => entry.ticket_id))];
-    const failingSet = new Set(failingTicketIds);
-    const survivors = involvedTicketIds.filter((ticketId) => !failingSet.has(ticketId));
-
-    const client: PoolClient = await this.db.getPool().connect();
-
-    try {
-      await client.query('BEGIN');
-
-      await this.matchmakingRepository.updateProposedMatchStatus(
-        client,
-        proposedMatchId,
-        'failed',
-      );
-
-      for (const ticketId of survivors) {
-        await this.matchmakingRepository.updateTicketStatus(client, ticketId, 'queued');
-      }
-
-      for (const ticketId of failingTicketIds) {
-        await this.matchmakingRepository.deleteTicketMembersByTicketId(client, ticketId);
-        await this.matchmakingRepository.deleteTicket(client, ticketId);
-      }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        // ignore
-      }
-      throw error;
-    } finally {
-      client.release();
-    }
-
-    await this.tryCreateProposedMatch(
-      proposedMatch.game_type_id,
-      proposedMatch.team_size,
-      20,
+  async insertMatch(
+    executor: Queryable,
+    params: {
+      matchId: string;
+      roomId: string | null;
+      gameTypeId: string;
+      startedByUserId: string;
+      currentPlayerUserId: string | null;
+      turnTimeLimitSec: number;
+      turnExpiresAt: Date | null;
+      initialStateText?: string | null;
+      currentStateText?: string | null;
+    },
+  ): Promise<{ match_id: string }> {
+    const result = await executor.query<{ match_id: string }>(
+      `
+    INSERT INTO boardgame_prod.matches (
+      match_id,
+      room_id,
+      game_type_id,
+      started_by_user_id,
+      match_status,
+      match_mode,
+      ranked_flag,
+      current_turn_no,
+      current_player_user_id,
+      winner_user_id,
+      turn_time_limit_sec,
+      turn_expires_at,
+      started_at,
+      ended_at,
+      initial_state_text,
+      current_state_text,
+      created_at
+    )
+    VALUES (
+      $1, $2, $3, $4,
+      'active',
+      'casual',
+      false,
+      1,
+      $5,
+      NULL,
+      $6,
+      $7,
+      CURRENT_TIMESTAMP,
+      NULL,
+      $8,
+      $9,
+      CURRENT_TIMESTAMP
+    )
+    RETURNING match_id
+    `,
+      [
+        params.matchId,
+        params.roomId,
+        params.gameTypeId,
+        params.startedByUserId,
+        params.currentPlayerUserId,
+        params.turnTimeLimitSec,
+        params.turnExpiresAt,
+        params.initialStateText ?? null,
+        params.currentStateText ?? null,
+      ],
     );
 
-    return {
-      message: 'Proposed match failed',
-      proposedMatchId,
-    };
+    return result.rows[0];
   }
+
+  async insertMatchPlayer(
+    executor: Queryable,
+    params: {
+      matchPlayerId: string;
+      matchId: string;
+      userId: string;
+      seatNo: number;
+      isBot?: boolean;
+    },
+  ): Promise<void> {
+    await executor.query(
+      `
+    INSERT INTO boardgame_prod.match_players (
+      match_player_id,
+      match_id,
+      user_id,
+      seat_no,
+      is_bot,
+      is_eliminated,
+      score,
+      joined_at
+    )
+    VALUES ($1, $2, $3, $4, $5, false, 0, CURRENT_TIMESTAMP)
+    `,
+      [
+        params.matchPlayerId,
+        params.matchId,
+        params.userId,
+        params.seatNo,
+        params.isBot ?? false,
+      ],
+    );
+  }
+
 }
