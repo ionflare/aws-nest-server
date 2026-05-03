@@ -18,6 +18,8 @@ import {
     ProposedMatchEntryRow,
     ProposedMatchRow,
 } from './matchmaking.repository';
+import { MatchesService } from 'src/matches/matches.service';
+import { MatchmakingEventsService } from './matchmaking-events.service';
 
 type QueueMember = {
     userId: string;
@@ -41,6 +43,8 @@ export class MatchmakingService {
         private readonly partiesService: PartiesService,
         private readonly participationService: ParticipationService,
         private readonly matchmakingRepository: MatchmakingRepository,
+        private readonly matchesService: MatchesService,
+        private readonly matchmakingEventsService: MatchmakingEventsService,
     ) { }
 
     private toProposedMatchResponse(
@@ -290,6 +294,12 @@ export class MatchmakingService {
                 proposedMatch.proposed_match_id,
             );
 
+            const notifiedUserIds = [...new Set(entries.map((entry) => entry.user_id))];
+            this.matchmakingEventsService.emitProposedMatchFound(
+                notifiedUserIds,
+                proposedMatch.proposed_match_id,
+            );
+
             return this.toProposedMatchResponse(proposedMatch, entries);
         } catch (error) {
             try {
@@ -332,12 +342,13 @@ export class MatchmakingService {
                 'failed',
             );
 
-            for (const ticketId of failingTicketIds) {
-                await this.matchmakingRepository.updateTicketStatus(client, ticketId, 'cancelled');
-            }
-
             for (const ticketId of survivors) {
                 await this.matchmakingRepository.updateTicketStatus(client, ticketId, 'queued');
+            }
+
+            for (const ticketId of failingTicketIds) {
+                await this.matchmakingRepository.deleteTicketMembersByTicketId(client, ticketId);
+                await this.matchmakingRepository.deleteTicket(client, ticketId);
             }
 
             await client.query('COMMIT');
@@ -351,6 +362,12 @@ export class MatchmakingService {
         } finally {
             client.release();
         }
+
+        const affectedUserIds = [...new Set(entries.map((entry) => entry.user_id))];
+        this.matchmakingEventsService.emitProposedMatchFailed(
+            affectedUserIds,
+            proposedMatchId,
+        );
 
         await this.tryCreateProposedMatch(
             proposedMatch.game_type_id,
@@ -567,53 +584,69 @@ export class MatchmakingService {
             (entry) => entry.response_status === 'accepted',
         );
 
-        if (everyoneAccepted) {
-            const client2: PoolClient = await this.db.getPool().connect();
-
-            try {
-                await client2.query('BEGIN');
-
-                await this.matchmakingRepository.updateProposedMatchStatus(
-                    client2,
-                    dto.proposedMatchId,
-                    'confirmed',
-                );
-
-                const ticketIds = [...new Set(refreshedEntries.map((entry) => entry.ticket_id))];
-                for (const ticketId of ticketIds) {
-                    await this.matchmakingRepository.updateTicketStatus(
-                        client2,
-                        ticketId,
-                        'matched',
-                    );
-                }
-
-                await client2.query('COMMIT');
-            } catch (error) {
-                try {
-                    await client2.query('ROLLBACK');
-                } catch {
-                    // ignore
-                }
-                throw error;
-            } finally {
-                client2.release();
-            }
-
+        if (!everyoneAccepted) {
             return {
-                message: 'Proposed match confirmed',
-                confirmed: true,
+                message: 'Accepted proposed match',
+                confirmed: false,
+                matchId: null,
                 proposedMatch: this.toProposedMatchResponse(proposedMatch, refreshedEntries),
             };
         }
 
+        const involvedTicketIds = [...new Set(refreshedEntries.map((entry) => entry.ticket_id))];
+
+        const matchResult = await this.matchesService.createDirectMatch({
+            gameTypeId: proposedMatch.game_type_id,
+            players: this.toDirectMatchPlayers(refreshedEntries),
+            startedByUserId: userId,
+            roomId: null,
+        });
+
+        const client2: PoolClient = await this.db.getPool().connect();
+
+        try {
+            await client2.query('BEGIN');
+
+            await this.matchmakingRepository.updateProposedMatchStatus(
+                client2,
+                dto.proposedMatchId,
+                'confirmed',
+            );
+
+            for (const ticketId of involvedTicketIds) {
+                await this.matchmakingRepository.deleteTicketMembersByTicketId(client2, ticketId);
+                await this.matchmakingRepository.deleteTicket(client2, ticketId);
+            }
+
+            await client2.query('COMMIT');
+        } catch (error) {
+            try {
+                await client2.query('ROLLBACK');
+            } catch {
+                // ignore
+            }
+            throw error;
+        } finally {
+            client2.release();
+        }
+
+        const confirmedUserIds = [
+            ...new Set(refreshedEntries.map((entry) => entry.user_id)),
+        ];
+
+        this.matchmakingEventsService.emitMatchConfirmed(
+            confirmedUserIds,
+            dto.proposedMatchId,
+            matchResult.matchId,
+        );
+
         return {
-            message: 'Accepted proposed match',
-            confirmed: false,
+            message: 'Proposed match confirmed',
+            confirmed: true,
+            matchId: matchResult.matchId,
             proposedMatch: this.toProposedMatchResponse(proposedMatch, refreshedEntries),
         };
     }
-
     async rejectProposedMatch(userId: string, dto: RejectProposedMatchDto) {
         const proposedMatch =
             await this.matchmakingRepository.findProposedMatchById(dto.proposedMatchId);
@@ -707,5 +740,20 @@ export class MatchmakingService {
 
             await this.failProposedMatch(proposedMatch.proposed_match_id, timedOutTicketIds);
         }
+    }
+
+    private toDirectMatchPlayers(entries: ProposedMatchEntryRow[]) {
+        const ordered = [...entries].sort((a, b) => {
+            if (a.team_no !== b.team_no) {
+                return a.team_no - b.team_no;
+            }
+
+            return a.user_id.localeCompare(b.user_id);
+        });
+
+        return ordered.map((entry, index) => ({
+            userId: entry.user_id,
+            seatNo: index + 1,
+        }));
     }
 }

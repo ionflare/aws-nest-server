@@ -26,6 +26,7 @@ import { RoomsService } from '../rooms/rooms.service';
 import { MatchesService } from '../matches/matches.service';
 import { PlayMoveDto } from '../matches/dto/play-move.dto';
 import { MatchEventsService } from '../matches/match-events.service';
+import { MatchmakingEventsService } from 'src/matchmaking/matchmaking-events.service';
 type JwtUserPayload = {
   sub: string;
   username: string;
@@ -68,6 +69,7 @@ export class RealtimeGateway
     private readonly roomEventsService: RoomEventsService,
     private readonly matchesService: MatchesService,
     private readonly matchEventsService: MatchEventsService,
+    private readonly matchmakingEventsService: MatchmakingEventsService,
   ) { }
 
   onModuleInit() {
@@ -156,6 +158,49 @@ export class RealtimeGateway
         }
       }),
     );
+
+    this.listenerCleanupFns.push(
+      this.matchmakingEventsService.onProposedMatchFound(
+        ({ userIds, proposedMatchId }) => {
+          for (const userId of userIds) {
+            this.broadcastToChannel(
+              this.buildUserChannel(userId),
+              'matchmaking_proposed_match',
+              { proposedMatchId },
+            );
+          }
+        },
+      ),
+    );
+
+    this.listenerCleanupFns.push(
+      this.matchmakingEventsService.onProposedMatchFailed(
+        ({ userIds, proposedMatchId }) => {
+          for (const userId of userIds) {
+            this.broadcastToChannel(
+              this.buildUserChannel(userId),
+              'matchmaking_proposed_match_failed',
+              { proposedMatchId },
+            );
+          }
+        },
+      ),
+    );
+
+    this.listenerCleanupFns.push(
+      this.matchmakingEventsService.onMatchConfirmed(
+        ({ userIds, proposedMatchId, matchId }) => {
+          for (const userId of userIds) {
+            this.broadcastToChannel(
+              this.buildUserChannel(userId),
+              'matchmaking_match_confirmed',
+              { proposedMatchId, matchId },
+            );
+          }
+        },
+      ),
+    );
+    
   }
 
   afterInit(server: WsWebSocketServer) {
@@ -210,6 +255,7 @@ export class RealtimeGateway
 
       client.user = payload;
       client.subscriptions = new Set();
+      this.addClientToChannel(client, this.buildUserChannel(client.user.sub));
 
       client.send(
         JSON.stringify({
@@ -569,6 +615,11 @@ export class RealtimeGateway
       throw new WsException(message);
     }
   }
+
+  private buildUserChannel(userId: string) {
+    return `user:${userId}`;
+  }
+
   onModuleDestroy() {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);

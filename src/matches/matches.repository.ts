@@ -46,7 +46,7 @@ export type GameTypeLiteRow = QueryResultRow & {
 
 @Injectable()
 export class MatchesRepository {
-  constructor(private readonly db: AuroraDsqlService) {}
+  constructor(private readonly db: AuroraDsqlService) { }
 
   async findMatchById(matchId: string): Promise<MatchInternalRow | null> {
     const result = await this.db.query<MatchInternalRow>(
@@ -251,5 +251,67 @@ export class MatchesRepository {
         params.finished,
       ],
     );
+  }
+
+  private async failProposedMatch(
+    proposedMatchId: string,
+    failingTicketIds: string[],
+  ) {
+    const proposedMatch =
+      await this.matchmakingRepository.findProposedMatchById(proposedMatchId);
+
+    if (!proposedMatch) {
+      return null;
+    }
+
+    const entries =
+      await this.matchmakingRepository.getProposedMatchEntries(proposedMatchId);
+
+    const involvedTicketIds = [...new Set(entries.map((entry) => entry.ticket_id))];
+    const failingSet = new Set(failingTicketIds);
+    const survivors = involvedTicketIds.filter((ticketId) => !failingSet.has(ticketId));
+
+    const client: PoolClient = await this.db.getPool().connect();
+
+    try {
+      await client.query('BEGIN');
+
+      await this.matchmakingRepository.updateProposedMatchStatus(
+        client,
+        proposedMatchId,
+        'failed',
+      );
+
+      for (const ticketId of survivors) {
+        await this.matchmakingRepository.updateTicketStatus(client, ticketId, 'queued');
+      }
+
+      for (const ticketId of failingTicketIds) {
+        await this.matchmakingRepository.deleteTicketMembersByTicketId(client, ticketId);
+        await this.matchmakingRepository.deleteTicket(client, ticketId);
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    await this.tryCreateProposedMatch(
+      proposedMatch.game_type_id,
+      proposedMatch.team_size,
+      20,
+    );
+
+    return {
+      message: 'Proposed match failed',
+      proposedMatchId,
+    };
   }
 }
