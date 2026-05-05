@@ -10,6 +10,7 @@ import { MatchesModule } from './matches/matches.module';
 import { ParticipationModule } from './participation/participation.module';
 import { PartiesModule } from './parties/parties.module';
 import { MatchmakingModule } from './matchmaking/matchmaking.module';
+import { RatingsModule } from './ratings/ratings.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { MatchmakingModule } from './matchmaking/matchmaking.module';
     ParticipationModule,
     PartiesModule,
     MatchmakingModule,
+    RatingsModule,
   ],
 })
 export class AppModule {}

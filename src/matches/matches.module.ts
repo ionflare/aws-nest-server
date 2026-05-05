@@ -7,9 +7,10 @@ import { MatchesRepository } from './matches.repository';
 import { MatchesService } from './matches.service';
 import { GameEngineRegistry } from './engines/game-engine.registry';
 import { XoGameEngine } from './engines/xo.game-engine';
+import { RatingsModule } from 'src/ratings/ratings.module';
 
 @Module({
-  imports: [ParticipationModule],
+  imports: [ParticipationModule, RatingsModule],
   controllers: [MatchesController],
   providers: [
     MatchesRepository,

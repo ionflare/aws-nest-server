@@ -17,6 +17,7 @@ import {
   MatchPlayerInternalRow,
   MatchesRepository,
 } from './matches.repository';
+import { RatingsService } from 'src/ratings/ratings.service';
 
 @Injectable()
 export class MatchesService {
@@ -26,6 +27,7 @@ export class MatchesService {
     private readonly gameEngineRegistry: GameEngineRegistry,
     private readonly participationService: ParticipationService,
     private readonly matchEventsService: MatchEventsService,
+    private readonly ratingsService: RatingsService,
   ) { }
 
   private toGamePlayers(players: MatchPlayerInternalRow[]): GamePlayer[] {
@@ -196,6 +198,13 @@ export class MatchesService {
       });
 
       if (result.finished) {
+        await this.applyRankedRatingIfNeeded(
+          client,
+          match,
+          players,
+          result.winnerUserId,
+        );
+
         await this.participationService.releaseMatchMembershipsForMatch(
           client,
           dto.matchId,
@@ -285,6 +294,12 @@ export class MatchesService {
         finished: true,
       });
 
+      await this.applyRankedRatingIfNeeded(
+        client,
+        match,
+        players,
+        result.winnerUserId,
+      );
       await this.participationService.releaseMatchMembershipsForMatch(client, matchId);
 
       await client.query('COMMIT');
@@ -361,6 +376,13 @@ export class MatchesService {
         turnExpiresAt: null,
         finished: true,
       });
+
+      await this.applyRankedRatingIfNeeded(
+        client,
+        match,
+        players,
+        result.winnerUserId,
+      );
 
       await this.participationService.releaseMatchMembershipsForMatch(
         client,
@@ -468,4 +490,28 @@ export class MatchesService {
       client.release();
     }
   }
+
+  private async applyRankedRatingIfNeeded(
+    executor: PoolClient,
+    match: MatchInternalRow,
+    players: MatchPlayerInternalRow[],
+    winnerUserId: string | null,
+  ) {
+    if (!match.ranked_flag) {
+      return;
+    }
+
+    if (players.length !== 2) {
+      return;
+    }
+
+    await this.ratingsService.processRanked1v1Result(executor, {
+      matchId: match.match_id,
+      gameTypeId: match.game_type_id,
+      playerAUserId: players[0].user_id,
+      playerBUserId: players[1].user_id,
+      winnerUserId,
+    });
+  }
+
 }
