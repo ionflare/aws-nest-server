@@ -390,6 +390,13 @@ export class MatchmakingService {
         }
 
         const queueGroup = await this.resolveQueueGroupForActor(userId);
+
+        if (queueGroup.members.length > dto.teamSize) {
+            throw new ConflictException(
+                `Party size (${queueGroup.members.length}) exceeds selected team size (${dto.teamSize})`,
+            );
+        }
+        
         await this.ensureMembersAreFree(queueGroup.members);
 
         const client: PoolClient = await this.db.getPool().connect();

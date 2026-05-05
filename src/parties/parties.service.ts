@@ -14,6 +14,8 @@ import { PartiesRepository, PartyMemberRow, PartyRow } from './parties.repositor
 
 @Injectable()
 export class PartiesService {
+  private readonly DEFAULT_MAX_PARTY_MEMBERS = 5;
+
   constructor(
     private readonly db: AuroraDsqlService,
     private readonly partiesRepository: PartiesRepository,
@@ -61,13 +63,13 @@ export class PartiesService {
     return this.toPartyResponse(party, members);
   }
 
-  async createParty(userId: string, dto: CreatePartyDto) {
+  async createParty(userId: string, _dto: CreatePartyDto) {
     const existingParty = await this.partiesRepository.findPartyByUserId(userId);
     if (existingParty) {
       throw new ConflictException('User is already in another active party');
     }
 
-    const maxMembers = dto.maxMembers ?? 5;
+    const maxMembers = this.DEFAULT_MAX_PARTY_MEMBERS;
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const client: PoolClient = await this.db.getPool().connect();
