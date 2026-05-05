@@ -51,4 +51,9 @@ export interface GameEngine<TState = unknown, TMove = unknown> {
     players: GamePlayer[];
     currentPlayerUserId: string | null;
   }): ApplyMoveResult<TState>;
+
+  resolveOnStart?(params: {
+    state: TState;
+    players: GamePlayer[];
+  }): ApplyMoveResult<TState> | null;
 }

@@ -441,6 +441,12 @@ export class MatchesService {
         ? new Date(Date.now() + turnTimeLimitSec * 1000)
         : null;
 
+    const autoStartResult =
+      engine.resolveOnStart?.({
+        state: initialState,
+        players: sortedPlayers,
+      }) ?? null;
+
     const matchId = randomUUID();
     const client: PoolClient = await this.db.getPool().connect();
 
@@ -470,6 +476,35 @@ export class MatchesService {
         await this.participationService.acquireMatchMembership(
           client,
           player.userId,
+          matchId,
+        );
+      }
+
+      if (autoStartResult) {
+        await this.matchesRepository.insertMatchMove(client, {
+          moveId: randomUUID(),
+          matchId,
+          turnNo: 1,
+          actionNo: 1,
+          userId: autoStartResult.winnerUserId ?? params.startedByUserId,
+          moveType: autoStartResult.moveType,
+          movePayloadText: JSON.stringify(autoStartResult.movePayload),
+          stateAfterText: JSON.stringify(autoStartResult.nextState),
+        });
+
+        await this.matchesRepository.updateMatchState(client, {
+          matchId,
+          matchStatus: 'finished',
+          currentTurnNo: 1,
+          currentPlayerUserId: null,
+          winnerUserId: autoStartResult.winnerUserId,
+          currentStateText: JSON.stringify(autoStartResult.nextState),
+          turnExpiresAt: null,
+          finished: true,
+        });
+
+        await this.participationService.releaseMatchMembershipsForMatch(
+          client,
           matchId,
         );
       }
